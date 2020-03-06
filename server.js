@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  return res.status(200).send({'message': 'SHIPTIVITY API. Read documentation to see API docs'});
+  return res.status(200).send({ 'message': 'SHIPTIVITY API. Read documentation to see API docs' });
 });
 
 // We are keeping one connection alive for the rest of the life application for simplicity
@@ -26,8 +26,8 @@ const validateId = (id) => {
     return {
       valid: false,
       messageObj: {
-      'message': 'Invalid id provided.',
-      'long_message': 'Id can only be integer.',
+        'message': 'Invalid id provided.',
+        'long_message': 'Id can only be integer.',
       },
     };
   }
@@ -36,8 +36,8 @@ const validateId = (id) => {
     return {
       valid: false,
       messageObj: {
-      'message': 'Invalid id provided.',
-      'long_message': 'Cannot find client with that id.',
+        'message': 'Invalid id provided.',
+        'long_message': 'Cannot find client with that id.',
       },
     };
   }
@@ -55,8 +55,8 @@ const validatePriority = (priority) => {
     return {
       valid: false,
       messageObj: {
-      'message': 'Invalid priority provided.',
-      'long_message': 'Priority can only be positive integer.',
+        'message': 'Invalid priority provided.',
+        'long_message': 'Priority can only be positive integer.',
       },
     };
   }
@@ -92,7 +92,7 @@ app.get('/api/v1/clients', (req, res) => {
  * GET /api/v1/clients/{client_id} - get client by id
  */
 app.get('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
@@ -115,21 +115,81 @@ app.get('/api/v1/clients/:id', (req, res) => {
  *
  */
 app.put('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
   }
-
   let { status, priority } = req.body;
-  let clients = db.prepare('select * from clients').all();
-  const client = clients.find(client => client.id === id);
-
+  if (status) {
+    // status can only be either 'backlog' | 'in-progress' | 'complete'
+    if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
+      return res.status(400).send({
+        'message': 'Invalid status provided.',
+        'long_message': 'Status can only be one of the following: [backlog | in-progress | complete].',
+      });
+    }
+    else {
+      let clients = db.prepare('select * from clients').all();
+      //retrieve item to be update
+      const client = clients.find(client => client.id === id);
+      //retrieve items with same status
+      let filteredClients = clients.filter(client => client.status === status);
+      //update query
+      let update = db.prepare(`update clients set priority = @priority, status = @status where id = @id`);
+      //check whether priority is provided
+      if (priority && validatePriority(priority)) {
+        // if priority provided update all priorities with elements of same status to ensure priorities are unique
+        let changePriorites = filteredClients.filter((val) => {
+          if (val.priority >= priority) {
+            val.priority = val.priority + 1;
+          }
+          if (val.id !== client.id) {
+            return val;
+          }
+        });
+        client.status = status;
+        client.priority = priority;
+        changePriorites = [client, ...changePriorites];
+        // update each item now
+        changePriorites.forEach(val => {
+          update.run({
+            priority: val.priority,
+            status: val.status,
+            id: val.id
+          });
+        });
+        let updatedClients = db.prepare('select * from clients').all();
+        return res.status(200).send(updatedClients);
+      }
+      else {
+        // if no priority provided and status of client is same do nothing
+        if (client.status === status) {
+          return res.status(200).send(clients);
+        }
+        else {
+          // if no priority provided and status of client is different, assign priority biggest priority to client
+          let biggest = filteredClients.reduce((big, currentVal) => currentVal.priority > big.priority ? currentVal : big);
+          let big_priority = biggest.priority + 1;
+          update.run({
+            priority: big_priority,
+            status: status,
+            id: id
+          });
+          let updatedClients = db.prepare('select * from clients').all();
+          return res.status(200).send(updatedClients);
+        }
+      }
+    }
+  }
+  else {
+    return res.status(400).send({
+      'message': 'Status not provided.',
+      'long_message': 'Provide the following status: [backlog | in-progress | complete].',
+    });
+  }
   /* ---------- Update code below ----------*/
 
-
-
-  return res.status(200).send(clients);
 });
 
 app.listen(3001);
